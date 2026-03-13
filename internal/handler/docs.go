@@ -316,6 +316,108 @@ const docsHTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <h2>Integration Guide</h2>
+  <p style="color:#999;font-size:0.85rem;margin-bottom:1.25rem;">Follow these three steps to add email collection to any website.</p>
+
+  <div class="quickstart">
+    <h3>Step 1 &mdash; Register your site</h3>
+    <p>Create a project to get an API key. Run this once per website (requires the admin key).</p>
+    <pre><code>curl -X POST https://emailwaitlist.ayushojha.com/api/v1/projects \
+  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Website",
+    "slug": "my-website",
+    "allowed_origins": ["https://mywebsite.com"]
+  }'</code></pre>
+    <p>Save the <code>api_key</code> from the response &mdash; it starts with <code>wl_</code> and won't be shown again.</p>
+  </div>
+
+  <div class="quickstart">
+    <h3>Step 2 &mdash; Add the form to your frontend</h3>
+    <p>Drop this into any page. Works with React, Vue, Svelte, plain HTML &mdash; anything that can call <code>fetch</code>.</p>
+    <div class="label">React / Next.js</div>
+    <pre><code>async function subscribe(email, name) {
+  const res = await fetch('https://emailwaitlist.ayushojha.com/api/v1/subscribe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': 'wl_your_project_api_key'
+    },
+    body: JSON.stringify({
+      email,
+      metadata: { name, source: 'landing-page' }
+    })
+  });
+
+  const data = await res.json();
+
+  if (res.ok) {
+    // Success &mdash; show confirmation
+    return { success: true, message: data.message };
+  } else if (res.status === 409) {
+    // Already subscribed
+    return { success: false, message: 'You're already on the list!' };
+  } else if (res.status === 429) {
+    // Rate limited
+    return { success: false, message: 'Too many requests. Try again shortly.' };
+  } else {
+    return { success: false, message: data.error || 'Something went wrong.' };
+  }
+}</code></pre>
+    <div class="label">Plain HTML + Vanilla JS</div>
+    <pre><code>&lt;form id="waitlist-form"&gt;
+  &lt;input type="email" id="wl-email" placeholder="you@example.com" required /&gt;
+  &lt;button type="submit"&gt;Join Waitlist&lt;/button&gt;
+  &lt;p id="wl-msg"&gt;&lt;/p&gt;
+&lt;/form&gt;
+
+&lt;script&gt;
+document.getElementById('waitlist-form').addEventListener('submit', async (e) =&gt; {
+  e.preventDefault();
+  const email = document.getElementById('wl-email').value;
+  const msg = document.getElementById('wl-msg');
+
+  const res = await fetch('https://emailwaitlist.ayushojha.com/api/v1/subscribe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': 'wl_your_project_api_key'
+    },
+    body: JSON.stringify({ email })
+  });
+
+  const data = await res.json();
+  msg.textContent = res.ok ? data.message : data.error;
+});
+&lt;/script&gt;</code></pre>
+  </div>
+
+  <div class="quickstart">
+    <h3>Step 3 &mdash; Manage your subscribers</h3>
+    <p>Use these endpoints with the same API key to view, export, or remove subscribers.</p>
+    <table>
+      <tr><th>Action</th><th>Request</th></tr>
+      <tr><td>List subscribers</td><td><code>GET /api/v1/subscribers?limit=50&amp;offset=0</code></td></tr>
+      <tr><td>Export CSV</td><td><code>GET /api/v1/subscribers/export</code></td></tr>
+      <tr><td>Unsubscribe</td><td><code>DELETE /api/v1/subscribers/{email}</code></td></tr>
+      <tr><td>Dashboard stats</td><td><code>GET /api/v1/stats</code></td></tr>
+    </table>
+    <p style="margin-top:0.75rem;">All requests require the <code>X-API-Key</code> header.</p>
+  </div>
+
+  <div class="quickstart">
+    <h3>Response Handling Cheatsheet</h3>
+    <table>
+      <tr><th>Status</th><th>Meaning</th><th>What to show the user</th></tr>
+      <tr><td><code>201</code></td><td>Subscribed</td><td>Success message</td></tr>
+      <tr><td><code>400</code></td><td>Bad email</td><td>"Please enter a valid email"</td></tr>
+      <tr><td><code>409</code></td><td>Duplicate</td><td>"You're already on the waitlist"</td></tr>
+      <tr><td><code>429</code></td><td>Rate limited</td><td>"Please try again in a minute"</td></tr>
+      <tr><td><code>401</code></td><td>Bad API key</td><td>Check your X-API-Key header</td></tr>
+    </table>
+  </div>
+
   <h2>Rate Limiting</h2>
   <p style="color:#999;font-size:0.85rem;">The <code>POST /api/v1/subscribe</code> endpoint is rate-limited to <strong>30 requests per minute per IP</strong>. When exceeded, the API returns <code>429 Too Many Requests</code>. Other endpoints are not rate-limited.</p>
 
