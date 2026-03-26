@@ -56,14 +56,14 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// API docs
+	// Homepage and API docs
 	mux.HandleFunc("GET /docs", handler.DocsHandler)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		http.Redirect(w, r, "/docs", http.StatusMovedPermanently)
+		handler.HomepageHandler(w, r)
 	})
 
 	// Public endpoints (API key auth)
