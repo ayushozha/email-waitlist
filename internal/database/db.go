@@ -54,6 +54,18 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	CREATE INDEX IF NOT EXISTS idx_subscribers_project_id ON subscribers(project_id);
 	CREATE INDEX IF NOT EXISTS idx_subscribers_subscribed_at ON subscribers(subscribed_at);
 	CREATE INDEX IF NOT EXISTS idx_projects_api_key ON projects(api_key);
+
+	CREATE TABLE IF NOT EXISTS email_templates (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		project_id UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+		subject VARCHAR(500) NOT NULL DEFAULT 'You''re on the waitlist!',
+		html_body TEXT,
+		from_name VARCHAR(255),
+		reply_to VARCHAR(320),
+		enabled BOOLEAN NOT NULL DEFAULT true,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
 	`
 
 	_, err := pool.Exec(ctx, schema)

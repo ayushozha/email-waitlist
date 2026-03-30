@@ -2,7 +2,10 @@ module github.com/ayush10/email-waitlist
 
 go 1.25.6
 
-require github.com/jackc/pgx/v5 v5.8.0
+require (
+	github.com/jackc/pgx/v5 v5.8.0
+	github.com/resend/resend-go/v3 v3.2.0
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

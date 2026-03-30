@@ -7,17 +7,19 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ayush10/email-waitlist/internal/email"
 	"github.com/ayush10/email-waitlist/internal/middleware"
 	"github.com/ayush10/email-waitlist/internal/model"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type SubscribeHandler struct {
-	pool *pgxpool.Pool
+	pool         *pgxpool.Pool
+	emailService *email.Service
 }
 
-func NewSubscribeHandler(pool *pgxpool.Pool) *SubscribeHandler {
-	return &SubscribeHandler{pool: pool}
+func NewSubscribeHandler(pool *pgxpool.Pool, emailService *email.Service) *SubscribeHandler {
+	return &SubscribeHandler{pool: pool, emailService: emailService}
 }
 
 func (h *SubscribeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +72,11 @@ func (h *SubscribeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("subscribe error [project=%s]: %v", project.Slug, err)
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Send confirmation email asynchronously
+	if h.emailService != nil {
+		go h.emailService.SendConfirmation(project, sub)
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{

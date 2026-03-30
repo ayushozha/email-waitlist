@@ -12,6 +12,7 @@ import (
 
 	"github.com/ayush10/email-waitlist/internal/config"
 	"github.com/ayush10/email-waitlist/internal/database"
+	"github.com/ayush10/email-waitlist/internal/email"
 	"github.com/ayush10/email-waitlist/internal/handler"
 	"github.com/ayush10/email-waitlist/internal/middleware"
 )
@@ -36,11 +37,21 @@ func main() {
 
 	log.Println("database connected and migrations applied")
 
+	// Email service (optional — disabled if RESEND_API_KEY is not set)
+	var emailService *email.Service
+	if cfg.ResendAPIKey != "" {
+		emailService = email.NewService(cfg.ResendAPIKey, pool, cfg.DefaultFromEmail)
+		log.Println("email confirmations enabled (Resend)")
+	} else {
+		log.Println("email confirmations disabled (set RESEND_API_KEY to enable)")
+	}
+
 	// Handlers
-	subscribeH := handler.NewSubscribeHandler(pool)
+	subscribeH := handler.NewSubscribeHandler(pool, emailService)
 	subscribersH := handler.NewSubscribersHandler(pool)
 	statsH := handler.NewStatsHandler(pool)
 	projectsH := handler.NewProjectsHandler(pool)
+	emailTmplH := handler.NewEmailTemplateHandler(pool)
 
 	// Middleware
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit)
@@ -74,6 +85,11 @@ func main() {
 	mux.Handle("DELETE /api/v1/subscribers/{email}", chain(http.HandlerFunc(subscribersH.Delete), cors, apiAuth))
 	mux.Handle("GET /api/v1/subscribers/export", chain(http.HandlerFunc(subscribersH.Export), cors, apiAuth))
 	mux.Handle("GET /api/v1/stats", chain(statsH, cors, apiAuth))
+
+	// Email template management (API key auth)
+	mux.Handle("GET /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Get), cors, apiAuth))
+	mux.Handle("PUT /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Upsert), cors, apiAuth))
+	mux.Handle("DELETE /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Delete), cors, apiAuth))
 
 	// Admin endpoints (admin key auth)
 	mux.Handle("POST /api/v1/projects", chain(http.HandlerFunc(projectsH.Create), cors, adminAuth))

@@ -7,10 +7,12 @@ import (
 )
 
 type Config struct {
-	Port        int
-	DatabaseURL string
-	AdminKey    string
-	RateLimit   int // requests per minute per IP
+	Port             int
+	DatabaseURL      string
+	AdminKey         string
+	RateLimit        int // requests per minute per IP
+	ResendAPIKey     string
+	DefaultFromEmail string
 }
 
 func Load() (*Config, error) {
@@ -42,10 +44,18 @@ func Load() (*Config, error) {
 		rateLimit = r
 	}
 
+	resendKey := os.Getenv("RESEND_API_KEY")
+	fromEmail := os.Getenv("DEFAULT_FROM_EMAIL")
+	if fromEmail == "" {
+		fromEmail = "Waitlist <waitlist@ayushojha.com>"
+	}
+
 	return &Config{
-		Port:        port,
-		DatabaseURL: dbURL,
-		AdminKey:    adminKey,
-		RateLimit:   rateLimit,
+		Port:             port,
+		DatabaseURL:      dbURL,
+		AdminKey:         adminKey,
+		RateLimit:        rateLimit,
+		ResendAPIKey:     resendKey,
+		DefaultFromEmail: fromEmail,
 	}, nil
 }
