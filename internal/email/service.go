@@ -59,8 +59,15 @@ func (s *Service) SendConfirmation(project *model.Project, sub *model.Subscriber
 		if tmpl.HTMLBody != nil && *tmpl.HTMLBody != "" {
 			htmlBody = *tmpl.HTMLBody
 		}
+		// Build the from address: prefer per-project from_email, fall back to default
+		emailAddr := extractEmail(s.fromAddr)
+		if tmpl.FromEmail != nil && *tmpl.FromEmail != "" {
+			emailAddr = *tmpl.FromEmail
+		}
 		if tmpl.FromName != nil && *tmpl.FromName != "" {
-			from = fmt.Sprintf("%s <%s>", *tmpl.FromName, extractEmail(s.fromAddr))
+			from = fmt.Sprintf("%s <%s>", *tmpl.FromName, emailAddr)
+		} else {
+			from = emailAddr
 		}
 	}
 

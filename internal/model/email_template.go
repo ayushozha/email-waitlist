@@ -14,6 +14,7 @@ type EmailTemplate struct {
 	Subject   string    `json:"subject"`
 	HTMLBody  *string   `json:"html_body"`
 	FromName  *string   `json:"from_name"`
+	FromEmail *string   `json:"from_email"`
 	ReplyTo   *string   `json:"reply_to"`
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"created_at"`
@@ -21,20 +22,21 @@ type EmailTemplate struct {
 }
 
 type UpsertEmailTemplateRequest struct {
-	Subject  *string `json:"subject"`
-	HTMLBody *string `json:"html_body"`
-	FromName *string `json:"from_name"`
-	ReplyTo  *string `json:"reply_to"`
-	Enabled  *bool   `json:"enabled"`
+	Subject   *string `json:"subject"`
+	HTMLBody  *string `json:"html_body"`
+	FromName  *string `json:"from_name"`
+	FromEmail *string `json:"from_email"`
+	ReplyTo   *string `json:"reply_to"`
+	Enabled   *bool   `json:"enabled"`
 }
 
 func GetEmailTemplate(ctx context.Context, pool *pgxpool.Pool, projectID string) (*EmailTemplate, error) {
 	t := &EmailTemplate{}
 	err := pool.QueryRow(ctx,
-		`SELECT id, project_id, subject, html_body, from_name, reply_to, enabled, created_at, updated_at
+		`SELECT id, project_id, subject, html_body, from_name, from_email, reply_to, enabled, created_at, updated_at
 		 FROM email_templates WHERE project_id = $1`,
 		projectID,
-	).Scan(&t.ID, &t.ProjectID, &t.Subject, &t.HTMLBody, &t.FromName, &t.ReplyTo, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+	).Scan(&t.ID, &t.ProjectID, &t.Subject, &t.HTMLBody, &t.FromName, &t.FromEmail, &t.ReplyTo, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -57,18 +59,19 @@ func UpsertEmailTemplate(ctx context.Context, pool *pgxpool.Pool, projectID stri
 
 	t := &EmailTemplate{}
 	err := pool.QueryRow(ctx,
-		`INSERT INTO email_templates (project_id, subject, html_body, from_name, reply_to, enabled)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO email_templates (project_id, subject, html_body, from_name, from_email, reply_to, enabled)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 ON CONFLICT (project_id) DO UPDATE SET
 			subject = EXCLUDED.subject,
 			html_body = EXCLUDED.html_body,
 			from_name = EXCLUDED.from_name,
+			from_email = EXCLUDED.from_email,
 			reply_to = EXCLUDED.reply_to,
 			enabled = EXCLUDED.enabled,
 			updated_at = NOW()
-		 RETURNING id, project_id, subject, html_body, from_name, reply_to, enabled, created_at, updated_at`,
-		projectID, subject, req.HTMLBody, req.FromName, req.ReplyTo, enabled,
-	).Scan(&t.ID, &t.ProjectID, &t.Subject, &t.HTMLBody, &t.FromName, &t.ReplyTo, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+		 RETURNING id, project_id, subject, html_body, from_name, from_email, reply_to, enabled, created_at, updated_at`,
+		projectID, subject, req.HTMLBody, req.FromName, req.FromEmail, req.ReplyTo, enabled,
+	).Scan(&t.ID, &t.ProjectID, &t.Subject, &t.HTMLBody, &t.FromName, &t.FromEmail, &t.ReplyTo, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("upsert email template: %w", err)
 	}

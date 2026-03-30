@@ -61,11 +61,15 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		subject VARCHAR(500) NOT NULL DEFAULT 'You''re on the waitlist!',
 		html_body TEXT,
 		from_name VARCHAR(255),
+		from_email VARCHAR(320),
 		reply_to VARCHAR(320),
 		enabled BOOLEAN NOT NULL DEFAULT true,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
+
+	-- Backfill from_email column if table was created before it existed
+	ALTER TABLE email_templates ADD COLUMN IF NOT EXISTS from_email VARCHAR(320);
 	`
 
 	_, err := pool.Exec(ctx, schema)
