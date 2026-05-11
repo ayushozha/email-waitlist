@@ -70,6 +70,36 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	-- Backfill from_email column if table was created before it existed
 	ALTER TABLE email_templates ADD COLUMN IF NOT EXISTS from_email VARCHAR(320);
+
+	-- Generic per-project signup ranking + referral attribution.
+	-- Position is 0-indexed and assigned at insert via a per-project counter.
+	-- Referral code is project-scoped unique; clients may pass their own slug
+	-- (e.g. paervo's "<prefix>-<MMDDYYYY>-#000") or accept the column being
+	-- left null and compute their own display format from position + email.
+	ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS position BIGINT;
+	ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS referral_code TEXT;
+	ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS referred_by_id UUID
+		REFERENCES subscribers(id) ON DELETE SET NULL;
+	ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS referral_count INT NOT NULL DEFAULT 0;
+
+	-- Backfill positions for any subscribers added before this column existed
+	-- so existing rows have stable ordinals. Uses subscribed_at as the tie-break.
+	UPDATE subscribers s
+	   SET position = sub.rn - 1
+	  FROM (
+	    SELECT id, ROW_NUMBER() OVER (
+	      PARTITION BY project_id ORDER BY subscribed_at, id
+	    ) AS rn
+	    FROM subscribers
+	  ) sub
+	 WHERE s.id = sub.id AND s.position IS NULL;
+
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_project_position
+		ON subscribers(project_id, position);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_subscribers_project_referral_code
+		ON subscribers(project_id, referral_code) WHERE referral_code IS NOT NULL;
+	CREATE INDEX IF NOT EXISTS idx_subscribers_referred_by
+		ON subscribers(referred_by_id);
 	`
 
 	_, err := pool.Exec(ctx, schema)

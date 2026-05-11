@@ -12,16 +12,22 @@ import (
 )
 
 type Subscriber struct {
-	ID           string          `json:"id"`
-	ProjectID    string          `json:"project_id"`
-	Email        string          `json:"email"`
-	Metadata     json.RawMessage `json:"metadata"`
-	SubscribedAt time.Time       `json:"subscribed_at"`
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"project_id"`
+	Email         string          `json:"email"`
+	Metadata      json.RawMessage `json:"metadata"`
+	SubscribedAt  time.Time       `json:"subscribed_at"`
+	Position      int64           `json:"position"`
+	ReferralCode  *string         `json:"referral_code,omitempty"`
+	ReferredByID  *string         `json:"referred_by_id,omitempty"`
+	ReferralCount int             `json:"referral_count"`
 }
 
 type SubscribeRequest struct {
-	Email    string          `json:"email"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Email          string          `json:"email"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	ReferralCode   *string         `json:"referral_code,omitempty"`    // optional caller-provided slug
+	ReferredByCode *string         `json:"referred_by_code,omitempty"` // optional referrer's referral_code
 }
 
 func (r *SubscribeRequest) Validate() error {
@@ -59,13 +65,67 @@ func AddSubscriber(ctx context.Context, pool *pgxpool.Pool, projectID string, re
 		metadata = json.RawMessage(`{}`)
 	}
 
+	// Resolve referrer (optional) to a subscriber id. Silent miss — we don't
+	// leak which referral codes are real.
+	var referredByID *string
+	if req.ReferredByCode != nil && *req.ReferredByCode != "" {
+		var id string
+		err := pool.QueryRow(ctx,
+			`SELECT id FROM subscribers
+			  WHERE project_id = $1 AND referral_code = $2
+			  LIMIT 1`,
+			projectID, *req.ReferredByCode,
+		).Scan(&id)
+		if err == nil {
+			referredByID = &id
+		}
+	}
+
+	// Insert with computed position (0-indexed per project). The unique index
+	// on (project_id, position) protects against the rare race where two
+	// concurrent inserts read the same MAX(position).
 	s := &Subscriber{}
 	err := pool.QueryRow(ctx,
-		`INSERT INTO subscribers (project_id, email, metadata)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, project_id, email, metadata, subscribed_at`,
-		projectID, req.Email, metadata,
-	).Scan(&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt)
+		`INSERT INTO subscribers
+		   (project_id, email, metadata, referral_code, referred_by_id, position)
+		 VALUES ($1, $2, $3, $4, $5,
+		         COALESCE((SELECT MAX(position) FROM subscribers WHERE project_id = $1), -1) + 1)
+		 RETURNING id, project_id, email, metadata, subscribed_at,
+		           position, referral_code, referred_by_id, referral_count`,
+		projectID, req.Email, metadata, req.ReferralCode, referredByID,
+	).Scan(
+		&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt,
+		&s.Position, &s.ReferralCode, &s.ReferredByID, &s.ReferralCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Credit the referrer if we attributed one. Best-effort — failure here
+	// shouldn't roll back the subscriber insert.
+	if referredByID != nil {
+		_, _ = pool.Exec(ctx,
+			`UPDATE subscribers SET referral_count = referral_count + 1
+			  WHERE id = $1`,
+			*referredByID,
+		)
+	}
+	return s, nil
+}
+
+func GetSubscriberByReferralCode(ctx context.Context, pool *pgxpool.Pool, projectID, code string) (*Subscriber, error) {
+	s := &Subscriber{}
+	err := pool.QueryRow(ctx,
+		`SELECT id, project_id, email, metadata, subscribed_at,
+		        position, referral_code, referred_by_id, referral_count
+		   FROM subscribers
+		  WHERE project_id = $1 AND referral_code = $2
+		  LIMIT 1`,
+		projectID, code,
+	).Scan(
+		&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt,
+		&s.Position, &s.ReferralCode, &s.ReferredByID, &s.ReferralCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +149,8 @@ func ListSubscribers(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 	}
 
 	rows, err := pool.Query(ctx,
-		`SELECT id, project_id, email, metadata, subscribed_at
+		`SELECT id, project_id, email, metadata, subscribed_at,
+		        position, referral_code, referred_by_id, referral_count
 		 FROM subscribers WHERE project_id = $1
 		 ORDER BY subscribed_at DESC
 		 LIMIT $2 OFFSET $3`,
@@ -103,7 +164,8 @@ func ListSubscribers(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 	var subs []Subscriber
 	for rows.Next() {
 		var s Subscriber
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt,
+			&s.Position, &s.ReferralCode, &s.ReferredByID, &s.ReferralCount); err != nil {
 			return nil, 0, err
 		}
 		subs = append(subs, s)
@@ -167,7 +229,8 @@ func GetStats(ctx context.Context, pool *pgxpool.Pool, projectID string) (*Subsc
 
 func ExportSubscribersCSV(ctx context.Context, pool *pgxpool.Pool, projectID string) ([]Subscriber, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT id, project_id, email, metadata, subscribed_at
+		`SELECT id, project_id, email, metadata, subscribed_at,
+		        position, referral_code, referred_by_id, referral_count
 		 FROM subscribers WHERE project_id = $1
 		 ORDER BY subscribed_at ASC`,
 		projectID,
@@ -180,7 +243,8 @@ func ExportSubscribersCSV(ctx context.Context, pool *pgxpool.Pool, projectID str
 	var subs []Subscriber
 	for rows.Next() {
 		var s Subscriber
-		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt,
+			&s.Position, &s.ReferralCode, &s.ReferredByID, &s.ReferralCount); err != nil {
 			return nil, err
 		}
 		subs = append(subs, s)
