@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	htmltemplate "html/template"
 	"log"
-	"text/template"
+	texttemplate "text/template"
+	"time"
 
 	"github.com/ayush10/email-waitlist/internal/model"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,12 +34,18 @@ type TemplateData struct {
 }
 
 func (s *Service) SendConfirmation(project *model.Project, sub *model.Subscriber) {
-	ctx := context.Background()
+	// Bounded context: this runs in a fire-and-forget goroutine, so a hung DB
+	// or Resend call must not leak the goroutine forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	// tmpl is nil when the project has no custom template. A lookup *error* is
+	// different: falling back to defaults then could send an email the project
+	// explicitly disabled, so skip sending instead.
 	tmpl, err := model.GetEmailTemplate(ctx, s.pool, project.ID)
 	if err != nil {
-		// No custom template — use defaults
-		tmpl = nil
+		log.Printf("email: template lookup failed, skipping send [project=%s, email=%s]: %v", project.Slug, sub.Email, err)
+		return
 	}
 
 	// If a template exists but is disabled, skip
@@ -71,13 +79,13 @@ func (s *Service) SendConfirmation(project *model.Project, sub *model.Subscriber
 		}
 	}
 
-	renderedSubject, err := renderTemplate("subject", subject, data)
+	renderedSubject, err := renderSubject(subject, data)
 	if err != nil {
 		log.Printf("email: failed to render subject [project=%s, email=%s]: %v", project.Slug, sub.Email, err)
 		return
 	}
 
-	renderedBody, err := renderTemplate("body", htmlBody, data)
+	renderedBody, err := renderBody(htmlBody, data)
 	if err != nil {
 		log.Printf("email: failed to render body [project=%s, email=%s]: %v", project.Slug, sub.Email, err)
 		return
@@ -94,7 +102,7 @@ func (s *Service) SendConfirmation(project *model.Project, sub *model.Subscriber
 		params.ReplyTo = *tmpl.ReplyTo
 	}
 
-	_, err = s.client.Emails.Send(params)
+	_, err = s.client.Emails.SendWithContext(ctx, params)
 	if err != nil {
 		log.Printf("email: failed to send confirmation [project=%s, email=%s]: %v", project.Slug, sub.Email, err)
 		return
@@ -103,8 +111,23 @@ func (s *Service) SendConfirmation(project *model.Project, sub *model.Subscriber
 	log.Printf("email: confirmation sent [project=%s, email=%s]", project.Slug, sub.Email)
 }
 
-func renderTemplate(name, text string, data TemplateData) (string, error) {
-	t, err := template.New(name).Parse(text)
+func renderSubject(text string, data TemplateData) (string, error) {
+	t, err := texttemplate.New("subject").Parse(text)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// renderBody uses html/template so subscriber-controlled data ({{.Email}} —
+// quoted local parts may contain HTML) is escaped; the template's own HTML
+// passes through untouched.
+func renderBody(text string, data TemplateData) (string, error) {
+	t, err := htmltemplate.New("body").Parse(text)
 	if err != nil {
 		return "", err
 	}

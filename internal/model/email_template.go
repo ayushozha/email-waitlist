@@ -2,9 +2,11 @@ package model
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,6 +32,10 @@ type UpsertEmailTemplateRequest struct {
 	Enabled   *bool   `json:"enabled"`
 }
 
+// GetEmailTemplate returns (nil, nil) when the project has no custom
+// template. A non-nil error means the lookup itself failed — callers must not
+// treat that as "no template", or a transient DB error would override a
+// project's enabled=false setting.
 func GetEmailTemplate(ctx context.Context, pool *pgxpool.Pool, projectID string) (*EmailTemplate, error) {
 	t := &EmailTemplate{}
 	err := pool.QueryRow(ctx,
@@ -37,6 +43,9 @@ func GetEmailTemplate(ctx context.Context, pool *pgxpool.Pool, projectID string)
 		 FROM email_templates WHERE project_id = $1`,
 		projectID,
 	).Scan(&t.ID, &t.ProjectID, &t.Subject, &t.HTMLBody, &t.FromName, &t.FromEmail, &t.ReplyTo, &t.Enabled, &t.CreatedAt, &t.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

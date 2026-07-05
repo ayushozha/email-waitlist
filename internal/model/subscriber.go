@@ -30,7 +30,11 @@ type SubscribeRequest struct {
 	ReferredByCode *string         `json:"referred_by_code,omitempty"` // optional referrer's referral_code
 }
 
+// Validate checks the email and normalizes it to the bare lowercase address —
+// mail.ParseAddress accepts forms like "Bob <bob@x.com>", which would
+// otherwise bypass the per-project uniqueness constraint.
 func (r *SubscribeRequest) Validate() error {
+	r.Email = strings.ToLower(strings.TrimSpace(r.Email))
 	if len(r.Email) > 320 {
 		return fmt.Errorf("email address too long")
 	}
@@ -43,15 +47,16 @@ func (r *SubscribeRequest) Validate() error {
 	if len(parts) != 2 || !strings.Contains(parts[1], ".") {
 		return fmt.Errorf("invalid email domain")
 	}
+	r.Email = addr.Address
 	return nil
 }
 
 type SubscriberStats struct {
-	Total   int            `json:"total"`
-	Today   int            `json:"today"`
-	Weekly  int            `json:"this_week"`
-	Monthly int            `json:"this_month"`
-	ByDay   []DayCount     `json:"by_day"`
+	Total   int        `json:"total"`
+	Today   int        `json:"today"`
+	Weekly  int        `json:"this_week"`
+	Monthly int        `json:"this_month"`
+	ByDay   []DayCount `json:"by_day"`
 }
 
 type DayCount struct {
@@ -81,9 +86,40 @@ func AddSubscriber(ctx context.Context, pool *pgxpool.Pool, projectID string, re
 		}
 	}
 
-	// Insert with computed position (0-indexed per project). The unique index
-	// on (project_id, position) protects against the rare race where two
-	// concurrent inserts read the same MAX(position).
+	// Position assignment can race: two concurrent inserts may read the same
+	// MAX(position), and the unique index on (project_id, position) rejects
+	// the loser. Retry those; report other unique violations precisely.
+	var s *Subscriber
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		s, err = insertSubscriber(ctx, pool, projectID, req, metadata, referredByID)
+		if err == nil || !isUniqueViolation(err, "idx_subscribers_project_position") {
+			break
+		}
+	}
+	if err != nil {
+		switch {
+		case isUniqueViolation(err, "subscribers_project_id_email_key"):
+			return nil, ErrAlreadySubscribed
+		case isUniqueViolation(err, "idx_subscribers_project_referral_code"):
+			return nil, ErrReferralCodeTaken
+		}
+		return nil, err
+	}
+
+	// Credit the referrer if we attributed one. Best-effort — failure here
+	// shouldn't roll back the subscriber insert.
+	if referredByID != nil {
+		_, _ = pool.Exec(ctx,
+			`UPDATE subscribers SET referral_count = referral_count + 1
+			  WHERE id = $1`,
+			*referredByID,
+		)
+	}
+	return s, nil
+}
+
+func insertSubscriber(ctx context.Context, pool *pgxpool.Pool, projectID string, req SubscribeRequest, metadata json.RawMessage, referredByID *string) (*Subscriber, error) {
 	s := &Subscriber{}
 	err := pool.QueryRow(ctx,
 		`INSERT INTO subscribers
@@ -100,35 +136,6 @@ func AddSubscriber(ctx context.Context, pool *pgxpool.Pool, projectID string, re
 	if err != nil {
 		return nil, err
 	}
-
-	// Credit the referrer if we attributed one. Best-effort — failure here
-	// shouldn't roll back the subscriber insert.
-	if referredByID != nil {
-		_, _ = pool.Exec(ctx,
-			`UPDATE subscribers SET referral_count = referral_count + 1
-			  WHERE id = $1`,
-			*referredByID,
-		)
-	}
-	return s, nil
-}
-
-func GetSubscriberByReferralCode(ctx context.Context, pool *pgxpool.Pool, projectID, code string) (*Subscriber, error) {
-	s := &Subscriber{}
-	err := pool.QueryRow(ctx,
-		`SELECT id, project_id, email, metadata, subscribed_at,
-		        position, referral_code, referred_by_id, referral_count
-		   FROM subscribers
-		  WHERE project_id = $1 AND referral_code = $2
-		  LIMIT 1`,
-		projectID, code,
-	).Scan(
-		&s.ID, &s.ProjectID, &s.Email, &s.Metadata, &s.SubscribedAt,
-		&s.Position, &s.ReferralCode, &s.ReferredByID, &s.ReferralCount,
-	)
-	if err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
@@ -138,6 +145,9 @@ func ListSubscribers(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 	}
 	if limit > 500 {
 		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	var total int
@@ -169,6 +179,9 @@ func ListSubscribers(ctx context.Context, pool *pgxpool.Pool, projectID string, 
 			return nil, 0, err
 		}
 		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
 	return subs, total, nil
 }
@@ -223,6 +236,9 @@ func GetStats(ctx context.Context, pool *pgxpool.Pool, projectID string) (*Subsc
 		dc.Date = t.Format("2006-01-02")
 		stats.ByDay = append(stats.ByDay, dc)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return stats, nil
 }
@@ -248,6 +264,9 @@ func ExportSubscribersCSV(ctx context.Context, pool *pgxpool.Pool, projectID str
 			return nil, err
 		}
 		subs = append(subs, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return subs, nil
 }

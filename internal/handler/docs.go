@@ -83,7 +83,7 @@ const docsHTML = `<!DOCTYPE html>
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-API-Key': 'wl_your_project_api_key'
+    'X-API-Key': 'wl_pub_your_publishable_key'
   },
   body: JSON.stringify({
     email: 'user@example.com',
@@ -95,12 +95,14 @@ const docsHTML = `<!DOCTYPE html>
   </div>
 
   <h2>Authentication</h2>
-  <p style="color:#999;font-size:0.85rem;margin-bottom:0.5rem;">Two auth mechanisms — use the right header for each endpoint type:</p>
+  <p style="color:#999;font-size:0.85rem;margin-bottom:0.5rem;">Each project has two keys, plus a server-wide admin key:</p>
   <table>
     <tr><th>Header</th><th>Value</th><th>Used for</th></tr>
-    <tr><td><code>X-API-Key</code></td><td>Project API key (<code>wl_...</code>)</td><td>All project-scoped endpoints</td></tr>
+    <tr><td><code>X-API-Key</code></td><td>Publishable key (<code>wl_pub_...</code>)</td><td><code>POST /subscribe</code> only — safe to embed in frontend code</td></tr>
+    <tr><td><code>X-API-Key</code></td><td>Secret key (<code>wl_sec_...</code>)</td><td>All project-scoped endpoints — keep server-side only</td></tr>
     <tr><td><code>X-Admin-Key</code></td><td>Server admin key</td><td>Project management endpoints</td></tr>
   </table>
+  <p style="color:#999;font-size:0.85rem;margin-top:0.5rem;">Never ship the secret key to a browser — it can read and export your subscriber list. The publishable key can't.</p>
 
   <h2>Endpoints</h2>
 
@@ -117,13 +119,15 @@ const docsHTML = `<!DOCTYPE html>
       <div class="label">Request Body</div>
       <table>
         <tr><th>Field</th><th>Type</th><th></th><th>Description</th></tr>
-        <tr><td><code>email</code></td><td>string</td><td><span class="required">required</span></td><td>Email address (max 320 chars)</td></tr>
+        <tr><td><code>email</code></td><td>string</td><td><span class="required">required</span></td><td>Email address (max 320 chars, normalized to lowercase)</td></tr>
         <tr><td><code>metadata</code></td><td>object</td><td><span class="optional">optional</span></td><td>Arbitrary JSON (max 4KB)</td></tr>
+        <tr><td><code>referral_code</code></td><td>string</td><td><span class="optional">optional</span></td><td>Caller-provided referral slug for this subscriber</td></tr>
+        <tr><td><code>referred_by_code</code></td><td>string</td><td><span class="optional">optional</span></td><td>Referral code of the referring subscriber</td></tr>
       </table>
       <div class="label">Example</div>
       <pre><code>curl -X POST https://emailwaitlist.ayushojha.com/api/v1/subscribe \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: wl_abc123" \
+  -H "X-API-Key: wl_pub_abc123" \
   -d '{"email":"user@example.com","metadata":{"name":"Jane"}}'</code></pre>
       <div class="label">Response <span class="response-code">201</span></div>
       <pre><code>{
@@ -133,7 +137,9 @@ const docsHTML = `<!DOCTYPE html>
     "project_id": "uuid",
     "email": "user@example.com",
     "metadata": {"name": "Jane"},
-    "subscribed_at": "2026-03-12T10:00:00Z"
+    "subscribed_at": "2026-03-12T10:00:00Z",
+    "position": 41,
+    "referral_count": 0
   }
 }</code></pre>
       <div class="label">Errors</div>
@@ -141,7 +147,8 @@ const docsHTML = `<!DOCTYPE html>
         <tr><th>Code</th><th>Reason</th></tr>
         <tr><td><code>400</code></td><td>Invalid email or request body</td></tr>
         <tr><td><code>401</code></td><td>Missing or invalid API key</td></tr>
-        <tr><td><code>409</code></td><td>Email already subscribed to this project</td></tr>
+        <tr><td><code>403</code></td><td>Origin not in the project's allowed_origins</td></tr>
+        <tr><td><code>409</code></td><td>Email already subscribed, or referral code taken</td></tr>
         <tr><td><code>429</code></td><td>Rate limit exceeded (30 req/min/IP)</td></tr>
       </table>
     </div>
@@ -165,7 +172,7 @@ const docsHTML = `<!DOCTYPE html>
       </table>
       <div class="label">Example</div>
       <pre><code>curl https://emailwaitlist.ayushojha.com/api/v1/subscribers?limit=20&offset=0 \
-  -H "X-API-Key: wl_abc123"</code></pre>
+  -H "X-API-Key: wl_sec_abc123"</code></pre>
       <div class="label">Response <span class="response-code">200</span></div>
       <pre><code>{
   "subscribers": [...],
@@ -188,7 +195,7 @@ const docsHTML = `<!DOCTYPE html>
     <div class="endpoint-body">
       <div class="label">Example</div>
       <pre><code>curl https://emailwaitlist.ayushojha.com/api/v1/subscribers/export \
-  -H "X-API-Key: wl_abc123" \
+  -H "X-API-Key: wl_sec_abc123" \
   -o subscribers.csv</code></pre>
       <div class="label">Response</div>
       <p style="color:#999;font-size:0.85rem;">Returns a CSV file with columns: <code>email</code>, <code>metadata</code>, <code>subscribed_at</code></p>
@@ -207,7 +214,7 @@ const docsHTML = `<!DOCTYPE html>
     <div class="endpoint-body">
       <div class="label">Example</div>
       <pre><code>curl -X DELETE https://emailwaitlist.ayushojha.com/api/v1/subscribers/user@example.com \
-  -H "X-API-Key: wl_abc123"</code></pre>
+  -H "X-API-Key: wl_sec_abc123"</code></pre>
       <div class="label">Response <span class="response-code">200</span></div>
       <pre><code>{"message": "subscriber removed"}</code></pre>
       <div class="label">Errors</div>
@@ -230,7 +237,7 @@ const docsHTML = `<!DOCTYPE html>
     <div class="endpoint-body">
       <div class="label">Example</div>
       <pre><code>curl https://emailwaitlist.ayushojha.com/api/v1/stats \
-  -H "X-API-Key: wl_abc123"</code></pre>
+  -H "X-API-Key: wl_sec_abc123"</code></pre>
       <div class="label">Response <span class="response-code">200</span></div>
       <pre><code>{
   "total": 142,
@@ -270,16 +277,18 @@ const docsHTML = `<!DOCTYPE html>
   -d '{"name":"My App","slug":"my-app","allowed_origins":["https://myapp.com"]}'</code></pre>
       <div class="label">Response <span class="response-code">201</span></div>
       <pre><code>{
-  "message": "Project created. Save your API key — it won't be shown again.",
+  "message": "Project created. Save the secret api_key — it won't be shown again. The public_key is safe to embed in your frontend.",
   "project": {
     "id": "uuid",
     "name": "My App",
     "slug": "my-app",
-    "api_key": "wl_abc123...",
+    "api_key": "wl_sec_abc123...",
+    "public_key": "wl_pub_def456...",
     "allowed_origins": ["https://myapp.com"],
     "created_at": "2026-03-12T10:00:00Z"
   }
 }</code></pre>
+      <p style="color:#999;font-size:0.85rem;margin-top:0.5rem;">The secret <code>api_key</code> is stored hashed and only returned here. The <code>public_key</code> can be retrieved again via <code>GET /api/v1/projects</code>.</p>
     </div>
   </div>
 
@@ -321,7 +330,7 @@ const docsHTML = `<!DOCTYPE html>
 
   <div class="quickstart">
     <h3>Step 1 &mdash; Register your site</h3>
-    <p>Create a project to get an API key. Run this once per website (requires the admin key).</p>
+    <p>Create a project to get your keys. Run this once per website (requires the admin key).</p>
     <pre><code>curl -X POST https://emailwaitlist.ayushojha.com/api/v1/projects \
   -H "X-Admin-Key: YOUR_ADMIN_KEY" \
   -H "Content-Type: application/json" \
@@ -330,7 +339,7 @@ const docsHTML = `<!DOCTYPE html>
     "slug": "my-website",
     "allowed_origins": ["https://mywebsite.com"]
   }'</code></pre>
-    <p>Save the <code>api_key</code> from the response &mdash; it starts with <code>wl_</code> and won't be shown again.</p>
+    <p>Save the secret <code>api_key</code> (<code>wl_sec_...</code>) somewhere safe &mdash; it won't be shown again. Use the <code>public_key</code> (<code>wl_pub_...</code>) in your frontend.</p>
   </div>
 
   <div class="quickstart">
@@ -342,7 +351,7 @@ const docsHTML = `<!DOCTYPE html>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': 'wl_your_project_api_key'
+      'X-API-Key': 'wl_pub_your_publishable_key'
     },
     body: JSON.stringify({
       email,
@@ -382,7 +391,7 @@ document.getElementById('waitlist-form').addEventListener('submit', async (e) =&
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': 'wl_your_project_api_key'
+      'X-API-Key': 'wl_pub_your_publishable_key'
     },
     body: JSON.stringify({ email })
   });
@@ -395,7 +404,7 @@ document.getElementById('waitlist-form').addEventListener('submit', async (e) =&
 
   <div class="quickstart">
     <h3>Step 3 &mdash; Manage your subscribers</h3>
-    <p>Use these endpoints with the same API key to view, export, or remove subscribers.</p>
+    <p>Use these endpoints with your <strong>secret key</strong> (<code>wl_sec_...</code>) from a server or CLI &mdash; the publishable key is rejected here.</p>
     <table>
       <tr><th>Action</th><th>Request</th></tr>
       <tr><td>List subscribers</td><td><code>GET /api/v1/subscribers?limit=50&amp;offset=0</code></td></tr>
@@ -422,7 +431,7 @@ document.getElementById('waitlist-form').addEventListener('submit', async (e) =&
   <p style="color:#999;font-size:0.85rem;">The <code>POST /api/v1/subscribe</code> endpoint is rate-limited to <strong>30 requests per minute per IP</strong>. When exceeded, the API returns <code>429 Too Many Requests</code>. Other endpoints are not rate-limited.</p>
 
   <h2>CORS</h2>
-  <p style="color:#999;font-size:0.85rem;">Each project can define <code>allowed_origins</code> to restrict which domains can call the API from browsers. If no origins are set, all origins are allowed. The API handles <code>OPTIONS</code> preflight requests automatically.</p>
+  <p style="color:#999;font-size:0.85rem;">Each project can define <code>allowed_origins</code> to restrict which domains can call the API from browsers. Requests whose <code>Origin</code> header isn't in the list are rejected with <code>403</code>. If no origins are set, all origins are allowed. The API handles <code>OPTIONS</code> preflight requests automatically.</p>
 
   <footer>Email Waitlist API &mdash; Built by Ayush Ojha</footer>
 </div>

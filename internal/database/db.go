@@ -37,10 +37,34 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		name VARCHAR(255) NOT NULL,
 		slug VARCHAR(100) NOT NULL UNIQUE,
-		api_key VARCHAR(128) NOT NULL UNIQUE,
+		api_key_hash CHAR(64),
+		public_key VARCHAR(128),
 		allowed_origins TEXT[] DEFAULT '{}',
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
+
+	-- Key-security upgrade: secret keys are stored as SHA-256 hashes, and each
+	-- project gets a publishable key ("wl_pub_...") that is safe to embed in
+	-- browser code because it only grants access to POST /subscribe.
+	ALTER TABLE projects ADD COLUMN IF NOT EXISTS api_key_hash CHAR(64);
+	ALTER TABLE projects ADD COLUMN IF NOT EXISTS public_key VARCHAR(128);
+	DO $mig$
+	BEGIN
+		IF EXISTS (SELECT 1 FROM information_schema.columns
+		           WHERE table_schema = current_schema()
+		             AND table_name = 'projects' AND column_name = 'api_key') THEN
+			UPDATE projects SET api_key_hash = encode(sha256(api_key::bytea), 'hex')
+			 WHERE api_key_hash IS NULL;
+			ALTER TABLE projects DROP COLUMN api_key;
+		END IF;
+	END
+	$mig$;
+	UPDATE projects SET public_key = 'wl_pub_' || encode(gen_random_bytes(16), 'hex')
+	 WHERE public_key IS NULL;
+	ALTER TABLE projects ALTER COLUMN api_key_hash SET NOT NULL;
+	ALTER TABLE projects ALTER COLUMN public_key SET NOT NULL;
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_api_key_hash ON projects(api_key_hash);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_public_key ON projects(public_key);
 
 	CREATE TABLE IF NOT EXISTS subscribers (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -53,7 +77,6 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	CREATE INDEX IF NOT EXISTS idx_subscribers_project_id ON subscribers(project_id);
 	CREATE INDEX IF NOT EXISTS idx_subscribers_subscribed_at ON subscribers(subscribed_at);
-	CREATE INDEX IF NOT EXISTS idx_projects_api_key ON projects(api_key);
 
 	CREATE TABLE IF NOT EXISTS email_templates (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

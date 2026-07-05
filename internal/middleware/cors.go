@@ -3,50 +3,42 @@ package middleware
 import (
 	"net/http"
 	"slices"
-
-	"github.com/ayush10/email-waitlist/internal/model"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func CORS(pool *pgxpool.Pool) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
+// CORS enforces each project's allowed_origins and answers preflights.
+//
+// It must sit *inside* APIKeyAuth in the chain (auth first), because the
+// project — and therefore its origin allowlist — is read from the request
+// context. Preflight OPTIONS requests never carry custom headers like
+// X-API-Key, so they are answered permissively; enforcement happens on the
+// actual request, which is rejected outright when its Origin isn't allowed.
+func CORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		w.Header().Add("Vary", "Origin")
 
-			if r.Method == http.MethodOptions {
-				// For preflight, look up the project by API key if provided
-				apiKey := r.Header.Get("X-API-Key")
-				if apiKey != "" && origin != "" {
-					project, err := model.GetProjectByAPIKey(r.Context(), pool, apiKey)
-					if err == nil && isOriginAllowed(origin, project.AllowedOrigins) {
-						w.Header().Set("Access-Control-Allow-Origin", origin)
-					}
-				} else {
-					// Allow preflight without API key (browser sends OPTIONS without custom headers sometimes)
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-				}
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Admin-Key")
-				w.Header().Set("Access-Control-Max-Age", "86400")
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-
-			// For actual requests, check origin against project's allowed origins
-			project := ProjectFromContext(r.Context())
-			if project != nil && origin != "" {
-				if len(project.AllowedOrigins) == 0 || isOriginAllowed(origin, project.AllowedOrigins) {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-				}
-			} else if origin != "" {
-				// Admin endpoints or no project context — allow
+		if r.Method == http.MethodOptions {
+			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 			}
-
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Admin-Key")
-			next.ServeHTTP(w, r)
-		})
-	}
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if origin != "" {
+			project := ProjectFromContext(r.Context())
+			if project != nil && !isOriginAllowed(origin, project.AllowedOrigins) {
+				errorJSON(w, http.StatusForbidden, `{"error":"origin not allowed for this project"}`)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func isOriginAllowed(origin string, allowed []string) bool {
