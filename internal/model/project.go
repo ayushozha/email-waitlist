@@ -58,7 +58,10 @@ func generateKey(prefix string, bytes int) (string, error) {
 }
 
 // HashAPIKey returns the hex SHA-256 of a secret key. Keys are high-entropy
-// random values, so an unsalted hash is sufficient for storage.
+// random values, so an unsalted hash is sufficient for storage. Lookups
+// compare hashes via an indexed SQL equality — not constant-time, which is
+// accepted: the compared values are 256-bit digests of random keys, so any
+// timing signal reveals nothing an attacker can extend byte-by-byte.
 func HashAPIKey(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])

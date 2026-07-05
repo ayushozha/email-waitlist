@@ -47,6 +47,23 @@ func TestAdminAuth(t *testing.T) {
 	}
 }
 
+func TestPublishableKeyRejectedOnManagementEndpoints(t *testing.T) {
+	// The prefix check must run BEFORE any database lookup — publishable keys
+	// are embedded in public page source, so letting one reach a management
+	// endpoint would let anyone dump the subscriber list. A nil pool proves
+	// the rejection happens without touching the database.
+	handler := APIKeyAuth(nil, ScopeManage)(okHandler())
+
+	r := httptest.NewRequest("GET", "/api/v1/subscribers", nil)
+	r.Header.Set("X-API-Key", "wl_pub_abc123")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("publishable key on management endpoint: got %d, want 403", w.Code)
+	}
+}
+
 func TestErrorJSONSetsCORSAndContentType(t *testing.T) {
 	w := httptest.NewRecorder()
 	errorJSON(w, http.StatusUnauthorized, `{"error":"x"}`)
