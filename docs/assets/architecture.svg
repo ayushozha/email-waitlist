@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780" role="img" aria-label="Email Waitlist architecture diagram">
+  <defs>
+    <linearGradient id="boxGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1f2937"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#60a5fa"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#34d399"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#c084fc"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="780" fill="#0a0a0a"/>
+  <text x="600" y="42" fill="#f9fafb" font-family="Segoe UI, system-ui, sans-serif" font-size="28" font-weight="700" text-anchor="middle">Email Waitlist — System Architecture</text>
+  <text x="600" y="72" fill="#9ca3af" font-family="Segoe UI, system-ui, sans-serif" font-size="15" text-anchor="middle">Request flow, auth layers, persistence, and optional email delivery</text>
+
+  <!-- Clients -->
+  <rect x="60" y="110" width="220" height="90" rx="12" fill="url(#boxGrad)" stroke="#374151" stroke-width="2"/>
+  <text x="170" y="145" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Browser / Frontend</text>
+  <text x="170" y="172" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">Landing pages, SPAs</text>
+
+  <rect x="60" y="230" width="220" height="90" rx="12" fill="url(#boxGrad)" stroke="#374151" stroke-width="2"/>
+  <text x="170" y="265" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Admin / Scripts</text>
+  <text x="170" y="292" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">curl, internal tooling</text>
+
+  <!-- Go service -->
+  <rect x="380" y="95" width="440" height="360" rx="16" fill="#111827" stroke="#60a5fa" stroke-width="2"/>
+  <text x="600" y="130" fill="#60a5fa" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Go HTTP Server (:8090)</text>
+
+  <rect x="410" y="150" width="180" height="70" rx="10" fill="#0f172a" stroke="#1e3a8a"/>
+  <text x="500" y="180" fill="#dbeafe" font-family="Segoe UI, sans-serif" font-size="14" font-weight="600" text-anchor="middle">Public Routes</text>
+  <text x="500" y="202" fill="#93c5fd" font-family="SF Mono, Consolas, monospace" font-size="11" text-anchor="middle">GET /, /docs, /health</text>
+
+  <rect x="610" y="150" width="180" height="70" rx="10" fill="#0f172a" stroke="#14532d"/>
+  <text x="700" y="180" fill="#d1fae5" font-family="Segoe UI, sans-serif" font-size="14" font-weight="600" text-anchor="middle">API Routes</text>
+  <text x="700" y="202" fill="#86efac" font-family="SF Mono, Consolas, monospace" font-size="11" text-anchor="middle">/api/v1/*</text>
+
+  <rect x="410" y="240" width="380" height="90" rx="10" fill="#0f172a" stroke="#374151"/>
+  <text x="600" y="268" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="14" font-weight="700" text-anchor="middle">Middleware Chain</text>
+  <text x="600" y="292" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="12" text-anchor="middle">CORS → Rate Limit (subscribe) → API Key / Admin Key Auth</text>
+  <text x="600" y="314" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="12" text-anchor="middle">Project context injected into request</text>
+
+  <rect x="410" y="350" width="115" height="80" rx="10" fill="#0f172a" stroke="#374151"/>
+  <text x="467" y="382" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Handlers</text>
+  <text x="467" y="404" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">subscribe</text>
+  <text x="467" y="420" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">subscribers</text>
+
+  <rect x="542" y="350" width="115" height="80" rx="10" fill="#0f172a" stroke="#374151"/>
+  <text x="599" y="382" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Handlers</text>
+  <text x="599" y="404" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">stats</text>
+  <text x="599" y="420" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">projects</text>
+
+  <rect x="674" y="350" width="116" height="80" rx="10" fill="#0f172a" stroke="#374151"/>
+  <text x="732" y="382" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600" text-anchor="middle">Handlers</text>
+  <text x="732" y="404" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">email tmpl</text>
+  <text x="732" y="420" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="11" text-anchor="middle">homepage/docs</text>
+
+  <!-- PostgreSQL -->
+  <rect x="920" y="180" width="220" height="190" rx="12" fill="url(#boxGrad)" stroke="#34d399" stroke-width="2"/>
+  <text x="1030" y="215" fill="#34d399" font-family="Segoe UI, sans-serif" font-size="16" font-weight="700" text-anchor="middle">PostgreSQL</text>
+  <text x="1030" y="245" fill="#d1fae5" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">projects</text>
+  <text x="1030" y="270" fill="#d1fae5" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">subscribers</text>
+  <text x="1030" y="295" fill="#d1fae5" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">email_templates</text>
+  <text x="1030" y="330" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="12" text-anchor="middle">pgx pool + auto migrations</text>
+  <text x="1030" y="352" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="12" text-anchor="middle">on startup</text>
+
+  <!-- Resend -->
+  <rect x="920" y="430" width="220" height="110" rx="12" fill="url(#boxGrad)" stroke="#fbbf24" stroke-width="2"/>
+  <text x="1030" y="465" fill="#fbbf24" font-family="Segoe UI, sans-serif" font-size="16" font-weight="700" text-anchor="middle">Resend API</text>
+  <text x="1030" y="495" fill="#fde68a" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">Confirmation emails</text>
+  <text x="1030" y="520" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="12" text-anchor="middle">Optional — async goroutine</text>
+
+  <!-- Arrows -->
+  <line x1="280" y1="155" x2="380" y2="190" stroke="#60a5fa" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="280" y1="275" x2="380" y2="250" stroke="#c084fc" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <line x1="820" y1="285" x2="920" y2="275" stroke="#34d399" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <line x1="732" y1="430" x2="920" y2="470" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Subscribe flow box -->
+  <rect x="80" y="500" width="1040" height="230" rx="14" fill="#111827" stroke="#1f2937" stroke-width="2"/>
+  <text x="600" y="535" fill="#f9fafb" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" text-anchor="middle">Subscribe Flow (POST /api/v1/subscribe)</text>
+
+  <g font-family="Segoe UI, sans-serif" font-size="13">
+    <rect x="110" y="560" width="150" height="56" rx="10" fill="#0f172a" stroke="#374151"/>
+    <text x="185" y="592" fill="#e5e7eb" text-anchor="middle">1. Validate email</text>
+
+    <rect x="290" y="560" width="150" height="56" rx="10" fill="#0f172a" stroke="#374151"/>
+    <text x="365" y="592" fill="#e5e7eb" text-anchor="middle">2. Insert subscriber</text>
+
+    <rect x="470" y="560" width="170" height="56" rx="10" fill="#0f172a" stroke="#374151"/>
+    <text x="555" y="584" fill="#e5e7eb" text-anchor="middle">3. Assign position</text>
+    <text x="555" y="602" fill="#9ca3af" text-anchor="middle">+ referral attribution</text>
+
+    <rect x="670" y="560" width="170" height="56" rx="10" fill="#0f172a" stroke="#374151"/>
+    <text x="755" y="584" fill="#e5e7eb" text-anchor="middle">4. Return 201</text>
+    <text x="755" y="602" fill="#9ca3af" text-anchor="middle">with subscriber JSON</text>
+
+    <rect x="870" y="560" width="210" height="56" rx="10" fill="#0f172a" stroke="#78350f"/>
+    <text x="975" y="584" fill="#fde68a" text-anchor="middle">5. Async email send</text>
+    <text x="975" y="602" fill="#9ca3af" text-anchor="middle">if RESEND_API_KEY set</text>
+  </g>
+
+  <text x="600" y="660" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">Auth: X-API-Key resolves project → CORS checked against allowed_origins → rate limit 30 req/min/IP on subscribe only</text>
+  <text x="600" y="688" fill="#9ca3af" font-family="Segoe UI, sans-serif" font-size="13" text-anchor="middle">Admin endpoints use X-Admin-Key and bypass project scoping for project creation/listing</text>
+</svg>
