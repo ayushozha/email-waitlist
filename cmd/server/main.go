@@ -53,11 +53,13 @@ func main() {
 	projectsH := handler.NewProjectsHandler(pool)
 	emailTmplH := handler.NewEmailTemplateHandler(pool)
 
-	// Middleware
-	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit)
-	apiAuth := middleware.APIKeyAuth(pool)
+	// Middleware. CORS must run inside auth so per-project allowed_origins
+	// (read from request context) can actually be enforced.
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimit, cfg.TrustProxy)
+	subscribeAuth := middleware.APIKeyAuth(pool, middleware.ScopeSubscribe)
+	manageAuth := middleware.APIKeyAuth(pool, middleware.ScopeManage)
 	adminAuth := middleware.AdminAuth(cfg.AdminKey)
-	cors := middleware.CORS(pool)
+	cors := middleware.CORS
 
 	mux := http.NewServeMux()
 
@@ -77,26 +79,27 @@ func main() {
 		handler.HomepageHandler(w, r)
 	})
 
-	// Public endpoints (API key auth)
-	mux.Handle("POST /api/v1/subscribe", chain(subscribeH, cors, rateLimiter.Middleware(), apiAuth))
+	// Public endpoint (publishable or secret key)
+	mux.Handle("POST /api/v1/subscribe", chain(subscribeH, rateLimiter.Middleware(), subscribeAuth, cors))
 
-	// Project-scoped management endpoints (API key auth)
-	mux.Handle("GET /api/v1/subscribers", chain(http.HandlerFunc(subscribersH.List), cors, apiAuth))
-	mux.Handle("DELETE /api/v1/subscribers/{email}", chain(http.HandlerFunc(subscribersH.Delete), cors, apiAuth))
-	mux.Handle("GET /api/v1/subscribers/export", chain(http.HandlerFunc(subscribersH.Export), cors, apiAuth))
-	mux.Handle("GET /api/v1/stats", chain(statsH, cors, apiAuth))
+	// Project-scoped management endpoints (secret key only)
+	mux.Handle("GET /api/v1/subscribers", chain(http.HandlerFunc(subscribersH.List), manageAuth, cors))
+	mux.Handle("DELETE /api/v1/subscribers/{email}", chain(http.HandlerFunc(subscribersH.Delete), manageAuth, cors))
+	mux.Handle("GET /api/v1/subscribers/export", chain(http.HandlerFunc(subscribersH.Export), manageAuth, cors))
+	mux.Handle("GET /api/v1/stats", chain(statsH, manageAuth, cors))
 
-	// Email template management (API key auth)
-	mux.Handle("GET /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Get), cors, apiAuth))
-	mux.Handle("PUT /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Upsert), cors, apiAuth))
-	mux.Handle("DELETE /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Delete), cors, apiAuth))
+	// Email template management (secret key only)
+	mux.Handle("GET /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Get), manageAuth, cors))
+	mux.Handle("PUT /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Upsert), manageAuth, cors))
+	mux.Handle("DELETE /api/v1/email-template", chain(http.HandlerFunc(emailTmplH.Delete), manageAuth, cors))
 
 	// Admin endpoints (admin key auth)
-	mux.Handle("POST /api/v1/projects", chain(http.HandlerFunc(projectsH.Create), cors, adminAuth))
-	mux.Handle("GET /api/v1/projects", chain(http.HandlerFunc(projectsH.List), cors, adminAuth))
+	mux.Handle("POST /api/v1/projects", chain(http.HandlerFunc(projectsH.Create), adminAuth, cors))
+	mux.Handle("GET /api/v1/projects", chain(http.HandlerFunc(projectsH.List), adminAuth, cors))
 
-	// Handle OPTIONS for all api routes
-	mux.Handle("OPTIONS /api/", chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), cors))
+	// Handle OPTIONS preflight for all api routes (no auth — browsers never
+	// send custom headers on preflight; enforcement happens on the request)
+	mux.Handle("OPTIONS /api/", cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
@@ -106,7 +109,9 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown: ListenAndServe returns as soon as Shutdown starts,
+	// so main must wait for shutdownDone or in-flight requests get killed.
+	shutdownDone := make(chan struct{})
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -114,13 +119,17 @@ func main() {
 		log.Println("shutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("shutdown error: %v", err)
+		}
+		close(shutdownDone)
 	}()
 
 	log.Printf("email waitlist service running on :%d", cfg.Port)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+	<-shutdownDone
 }
 
 // chain applies middleware in order (outermost first)

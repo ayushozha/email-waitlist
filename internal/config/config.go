@@ -10,7 +10,8 @@ type Config struct {
 	Port             int
 	DatabaseURL      string
 	AdminKey         string
-	RateLimit        int // requests per minute per IP
+	RateLimit        int  // requests per minute per IP
+	TrustProxy       bool // trust X-Forwarded-For from a reverse proxy
 	ResendAPIKey     string
 	DefaultFromEmail string
 }
@@ -44,6 +45,15 @@ func Load() (*Config, error) {
 		rateLimit = r
 	}
 
+	trustProxy := false
+	if v := os.Getenv("TRUST_PROXY"); v != "" {
+		t, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TRUST_PROXY: %w", err)
+		}
+		trustProxy = t
+	}
+
 	resendKey := os.Getenv("RESEND_API_KEY")
 	fromEmail := os.Getenv("DEFAULT_FROM_EMAIL")
 	if fromEmail == "" {
@@ -55,6 +65,7 @@ func Load() (*Config, error) {
 		DatabaseURL:      dbURL,
 		AdminKey:         adminKey,
 		RateLimit:        rateLimit,
+		TrustProxy:       trustProxy,
 		ResendAPIKey:     resendKey,
 		DefaultFromEmail: fromEmail,
 	}, nil

@@ -2,10 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/ayush10/email-waitlist/internal/email"
 	"github.com/ayush10/email-waitlist/internal/middleware"
@@ -23,11 +23,6 @@ func NewSubscribeHandler(pool *pgxpool.Pool, emailService *email.Service) *Subsc
 }
 
 func (h *SubscribeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
 	project := middleware.ProjectFromContext(r.Context())
 	if project == nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -47,8 +42,6 @@ func (h *SubscribeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-
 	if err := req.Validate(); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -62,15 +55,21 @@ func (h *SubscribeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	sub, err := model.AddSubscriber(r.Context(), h.pool, project.ID, req)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+		switch {
+		case errors.Is(err, model.ErrAlreadySubscribed):
 			writeJSON(w, http.StatusConflict, map[string]string{
 				"error":   "already subscribed",
 				"message": "This email is already on the waitlist.",
 			})
-			return
+		case errors.Is(err, model.ErrReferralCodeTaken):
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":   "referral code already taken",
+				"message": "This referral code is already in use for this project.",
+			})
+		default:
+			log.Printf("subscribe error [project=%s]: %v", project.Slug, err)
+			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		}
-		log.Printf("subscribe error [project=%s]: %v", project.Slug, err)
-		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 

@@ -166,7 +166,7 @@ const homepageHTML = `<!DOCTYPE html>
   method: <span class="str">'POST'</span>,
   headers: {
     <span class="str">'Content-Type'</span>: <span class="str">'application/json'</span>,
-    <span class="str">'X-API-Key'</span>: <span class="str">'wl_your_project_key'</span>
+    <span class="str">'X-API-Key'</span>: <span class="str">'wl_pub_your_publishable_key'</span>
   },
   body: <span class="fn">JSON.stringify</span>({ email: <span class="str">'user@example.com'</span> })
 });
@@ -177,7 +177,7 @@ const homepageHTML = `<!DOCTYPE html>
     <div id="tab-curl" class="code-panel">
       <div class="code-block"><pre><code>curl -X POST https://emailwaitlist.ayushojha.com/api/v1/subscribe \
   -H <span class="str">"Content-Type: application/json"</span> \
-  -H <span class="str">"X-API-Key: wl_your_project_key"</span> \
+  -H <span class="str">"X-API-Key: wl_pub_your_publishable_key"</span> \
   -d <span class="str">'{"email":"user@example.com"}'</span>
 
 <span class="cm"># Response:</span>
@@ -194,7 +194,7 @@ document.<span class="fn">getElementById</span>(<span class="str">'waitlist'</sp
   e.<span class="fn">preventDefault</span>();
   <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(<span class="str">'https://emailwaitlist.ayushojha.com/api/v1/subscribe'</span>, {
     method: <span class="str">'POST'</span>,
-    headers: { <span class="str">'Content-Type'</span>: <span class="str">'application/json'</span>, <span class="str">'X-API-Key'</span>: <span class="str">'wl_...'</span> },
+    headers: { <span class="str">'Content-Type'</span>: <span class="str">'application/json'</span>, <span class="str">'X-API-Key'</span>: <span class="str">'wl_pub_...'</span> },
     body: <span class="fn">JSON.stringify</span>({ email: document.<span class="fn">getElementById</span>(<span class="str">'email'</span>).value })
   });
 });
@@ -259,7 +259,7 @@ document.<span class="fn">getElementById</span>(<span class="str">'waitlist'</sp
     <div class="step">
       <div class="step-num">1</div>
       <h3>Register your project</h3>
-      <p>Create a project with the admin key. You'll get a unique <code>wl_</code> API key.</p>
+      <p>Create a project with the admin key. You'll get a secret <code>wl_sec_</code> key for management and a publishable <code>wl_pub_</code> key that's safe to embed in your frontend.</p>
       <pre><code>curl -X POST /api/v1/projects \
   -H "X-Admin-Key: $ADMIN_KEY" \
   -d '{"name":"My App","slug":"my-app",
@@ -273,7 +273,7 @@ document.<span class="fn">getElementById</span>(<span class="str">'waitlist'</sp
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'X-API-Key': 'wl_your_key'
+    'X-API-Key': 'wl_pub_your_key'
   },
   body: JSON.stringify({
     email: 'user@example.com'

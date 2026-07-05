@@ -27,6 +27,11 @@ func (h *EmailTemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	tmpl, err := model.GetEmailTemplate(r.Context(), h.pool, project.ID)
 	if err != nil {
+		log.Printf("get email template error [project=%s]: %v", project.Slug, err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	if tmpl == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"template": nil,
 			"message":  "No custom template set. The default confirmation email will be used.",
@@ -43,6 +48,9 @@ func (h *EmailTemplateHandler) Upsert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+
+	// Templates are HTML documents; cap them well below anything abusive.
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
 
 	var req model.UpsertEmailTemplateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

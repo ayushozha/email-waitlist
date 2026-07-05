@@ -2,12 +2,13 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod download || true
+RUN go mod download
 COPY . .
-RUN go mod tidy && CGO_ENABLED=0 go build -o /email-waitlist ./cmd/server/
+RUN CGO_ENABLED=0 go build -o /email-waitlist ./cmd/server/
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 app
+USER app
 COPY --from=builder /email-waitlist /email-waitlist
 EXPOSE 8090
 CMD ["/email-waitlist"]

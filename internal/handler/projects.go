@@ -2,9 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/ayush10/email-waitlist/internal/model"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,10 +19,7 @@ func NewProjectsHandler(pool *pgxpool.Pool) *ProjectsHandler {
 }
 
 func (h *ProjectsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
 
 	var req model.CreateProjectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,7 +34,7 @@ func (h *ProjectsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	project, err := model.CreateProject(r.Context(), h.pool, req)
 	if err != nil {
-		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+		if errors.Is(err, model.ErrSlugTaken) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "project slug already exists"})
 			return
 		}
@@ -47,19 +44,15 @@ func (h *ProjectsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"message": "Project created. Save your API key — it won't be shown again.",
+		"message": "Project created. Save the secret api_key — it won't be shown again. The public_key is safe to embed in your frontend.",
 		"project": project,
 	})
 }
 
 func (h *ProjectsHandler) List(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
 	projects, err := model.ListProjects(r.Context(), h.pool)
 	if err != nil {
+		log.Printf("list projects error: %v", err)
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}

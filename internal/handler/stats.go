@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/ayush10/email-waitlist/internal/middleware"
@@ -17,11 +18,6 @@ func NewStatsHandler(pool *pgxpool.Pool) *StatsHandler {
 }
 
 func (h *StatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
 	project := middleware.ProjectFromContext(r.Context())
 	if project == nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -30,6 +26,7 @@ func (h *StatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := model.GetStats(r.Context(), h.pool, project.ID)
 	if err != nil {
+		log.Printf("stats error [project=%s]: %v", project.Slug, err)
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}

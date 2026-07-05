@@ -4,6 +4,7 @@
 
 **Multi-tenant email collection microservice** — collect waitlist signups from any frontend, manage subscribers per project, and optionally send branded confirmation emails via Resend.
 
+[![CI](https://github.com/ayushozha/email-waitlist/actions/workflows/ci.yml/badge.svg)](https://github.com/ayushozha/email-waitlist/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white)](internal/database/db.go)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](Dockerfile)
@@ -48,7 +49,8 @@ Email Waitlist is a small, production-oriented Go service that lets you add emai
 | Capability | Built in |
 |------------|----------|
 | Multi-tenant projects with isolated subscriber lists | Yes |
-| Per-project API keys (`wl_…`) | Yes |
+| Per-project publishable (`wl_pub_…`) + secret (`wl_sec_…`) keys | Yes |
+| Secret keys stored as SHA-256 hashes | Yes |
 | Browser-safe CORS with per-project `allowed_origins` | Yes |
 | Subscribe endpoint rate limiting (per IP) | Yes |
 | Subscriber metadata (JSON, up to 4 KB) | Yes |
@@ -75,7 +77,8 @@ The service uses the standard library `net/http` router (Go 1.22+ path patterns)
 | Rate limiting | Implemented | Subscribe only, default 30/min/IP |
 | CORS | Implemented | Per-project origin allowlist |
 | Homepage + `/docs` | Implemented | Served from embedded HTML |
-| Automated tests | Not present | Manual verification via `go build` / `go vet` |
+| Automated tests | Implemented | Unit tests for validation, auth, CORS, rate limiting, templates; `go test ./...` |
+| CI | Implemented | GitHub Actions: gofmt, vet, build, test |
 | OpenAPI / Swagger spec | Roadmap | Interactive HTML docs at `/docs` today |
 | Webhook notifications | Roadmap | e.g. Slack/Discord on new signup |
 | Double opt-in | Roadmap | Currently single-step subscribe |
@@ -100,7 +103,7 @@ flowchart TB
     subgraph Service["Go HTTP Server :8090"]
         direction TB
         PUB[Public routes<br/>GET / · /docs · /health]
-        MW[Middleware chain<br/>CORS → Rate limit → Auth]
+        MW[Middleware chain<br/>Rate limit → Auth → CORS]
         H[Handlers<br/>subscribe · subscribers · stats · projects · email-template]
         PUB --> MW
         MW --> H
@@ -122,21 +125,21 @@ flowchart TB
 
 ### Request lifecycle (subscribe)
 
-1. Browser sends `POST /api/v1/subscribe` with `X-API-Key` and JSON body.
-2. **CORS** middleware checks `Origin` against the project's `allowed_origins`.
-3. **Rate limiter** enforces `RATE_LIMIT` requests per minute per client IP (honours `X-Forwarded-For` behind proxies).
-4. **API key auth** resolves the project and injects it into request context.
-5. Handler validates email, inserts subscriber (with position + optional referral), returns `201`.
+1. Browser sends `POST /api/v1/subscribe` with `X-API-Key` (publishable key) and JSON body.
+2. **Rate limiter** enforces `RATE_LIMIT` requests per minute per client IP (`X-Forwarded-For` is only honoured when `TRUST_PROXY=true`).
+3. **API key auth** resolves the project and injects it into request context.
+4. **CORS** middleware checks `Origin` against the project's `allowed_origins` and rejects disallowed origins with `403` (auth must run first — the allowlist lives on the project).
+5. Handler validates and normalizes the email, inserts subscriber (with position + optional referral), returns `201`.
 6. If `RESEND_API_KEY` is configured, a background goroutine renders and sends the confirmation email.
 
 ### Middleware and auth layers
 
 | Layer | Applies to | Behaviour |
 |-------|------------|-----------|
-| CORS | All `/api/` routes | Per-project origin allowlist; handles `OPTIONS` preflight |
 | Rate limit | `POST /api/v1/subscribe` only | In-memory per-IP counter, configurable window |
-| `X-API-Key` | Project-scoped endpoints | Looks up `projects.api_key`, sets project context |
-| `X-Admin-Key` | `POST/GET /api/v1/projects` | Compared to server `ADMIN_KEY` env var |
+| `X-API-Key` | Project-scoped endpoints | Publishable key → subscribe only; secret key (matched by SHA-256 hash) → everything |
+| `X-Admin-Key` | `POST/GET /api/v1/projects` | Constant-time compare against server `ADMIN_KEY` env var |
+| CORS | All `/api/` routes (runs after auth) | Per-project origin allowlist; handles `OPTIONS` preflight; `Vary: Origin` |
 
 ---
 
@@ -216,14 +219,14 @@ curl.exe -X POST http://localhost:8090/api/v1/projects `
   -d '{\"name\":\"My App\",\"slug\":\"my-app\",\"allowed_origins\":[\"http://localhost:3000\"]}'
 ```
 
-Save the `api_key` from the response — it is only returned at creation time.
+Save the secret `api_key` (`wl_sec_…`) from the response — it is only returned at creation time (the server stores a hash). Use the `public_key` (`wl_pub_…`) in your frontend; it can be retrieved again later via `GET /api/v1/projects`.
 
 ### 5. Subscribe a test email
 
 ```powershell
 curl.exe -X POST http://localhost:8090/api/v1/subscribe `
   -H "Content-Type: application/json" `
-  -H "X-API-Key: wl_your_project_api_key" `
+  -H "X-API-Key: wl_pub_your_publishable_key" `
   -d '{\"email\":\"user@example.com\",\"metadata\":{\"source\":\"readme-test\"}}'
 ```
 
@@ -247,6 +250,7 @@ docker run --rm -p 8090:8090 `
 | `ADMIN_KEY` | **Yes** | — | Secret for admin endpoints (`X-Admin-Key` header) |
 | `PORT` | No | `8090` | HTTP listen port |
 | `RATE_LIMIT` | No | `30` | Max subscribe requests per minute per IP |
+| `TRUST_PROXY` | No | `false` | Set `true` only behind a reverse proxy that appends the client IP to `X-Forwarded-For`; otherwise the header is spoofable and ignored |
 | `RESEND_API_KEY` | No | — | Enables confirmation emails; service runs without it |
 | `DEFAULT_FROM_EMAIL` | No | `Waitlist <waitlist@ayushojha.com>` | Fallback sender when template has no `from_email` |
 
@@ -256,16 +260,19 @@ See [.env.example](.env.example) for a copy-paste template.
 
 ## Authentication
 
-Two separate auth mechanisms — use the correct header for each endpoint group.
+Each project has **two keys**, plus a server-wide admin key.
 
 | Header | Value format | Used for |
 |--------|--------------|----------|
-| `X-API-Key` | `wl_` + 64 hex chars | All project-scoped endpoints |
+| `X-API-Key` | Publishable key `wl_pub_` + 32 hex chars | `POST /subscribe` only — safe to embed in frontend code |
+| `X-API-Key` | Secret key `wl_sec_` + 64 hex chars | All project-scoped endpoints — server-side only |
 | `X-Admin-Key` | Server `ADMIN_KEY` | Project creation and listing |
 
-**API keys** are generated with `crypto/rand` and stored in `projects.api_key`. Each request authenticated with an API key is scoped to that project's subscribers, stats, and templates.
+**Why two keys?** The subscribe key necessarily ships in public page source. If that same key could also list and export subscribers, anyone could view-source your landing page and dump your email list. Publishable keys are rejected (`403`) on management endpoints.
 
-**Admin key** is a single server-wide secret. Protect it like a root credential — never embed it in frontend code.
+**Secret keys** are generated with `crypto/rand` and stored as SHA-256 hashes (`projects.api_key_hash`) — a database leak does not expose usable keys. The plaintext secret is returned exactly once, at project creation. Legacy `wl_…` keys created before the split still work as secret keys.
+
+**Admin key** is a single server-wide secret, compared in constant time. Protect it like a root credential — never embed it in frontend code.
 
 ---
 
@@ -343,7 +350,8 @@ Collect an email address. Rate-limited. Returns `201` on success.
 |--------|---------|
 | `400` | Invalid email, empty body, or metadata too large |
 | `401` | Missing or invalid API key |
-| `409` | Email already subscribed to this project |
+| `403` | Request `Origin` not in the project's `allowed_origins` |
+| `409` | Email already subscribed, or referral code already taken |
 | `429` | Rate limit exceeded |
 
 ---
@@ -407,7 +415,9 @@ Removes subscriber by email address (URL path). Returns `404` if not found.
 | `slug` | string | Yes | Lowercase alphanumeric + hyphens (e.g. `my-app`) |
 | `allowed_origins` | string[] | No | CORS origins; empty = allow all; `["*"]` = wildcard |
 
-**Success `201`:** returns project including `api_key`. **Save the key immediately.**
+**Success `201`:** returns the project including the secret `api_key` (`wl_sec_…`, shown only this once — the server keeps a hash) and the `public_key` (`wl_pub_…`) for frontend embedding. **Save the secret key immediately.**
+
+`GET /api/v1/projects` returns `public_key` for every project but never secret keys.
 
 ---
 
@@ -440,7 +450,7 @@ async function subscribe(email, metadata = {}) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': process.env.NEXT_PUBLIC_WAITLIST_API_KEY,
+      'X-API-Key': process.env.NEXT_PUBLIC_WAITLIST_PUBLIC_KEY, // wl_pub_...
     },
     body: JSON.stringify({ email, metadata }),
   });
@@ -454,7 +464,7 @@ async function subscribe(email, metadata = {}) {
 }
 ```
 
-> Store the API key in a public env var only if you accept that it will be visible in browser network traffic. The key identifies the project but does not grant admin access. For high-abuse surfaces, proxy subscribe calls through your own backend.
+> Use the **publishable key** (`wl_pub_…`) in browser code — it only allows subscribing and cannot read your subscriber list. Keep the secret key (`wl_sec_…`) server-side. For high-abuse surfaces, additionally set `allowed_origins` and consider proxying subscribe calls through your own backend.
 
 ### Plain HTML
 
@@ -475,7 +485,7 @@ document.getElementById('waitlist-form').addEventListener('submit', async (e) =>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': 'wl_your_project_api_key',
+      'X-API-Key': 'wl_pub_your_publishable_key',
     },
     body: JSON.stringify({ email }),
   });
@@ -493,6 +503,7 @@ document.getElementById('waitlist-form').addEventListener('submit', async (e) =>
 | `201` | Subscribed | Success message |
 | `400` | Invalid input | "Please enter a valid email" |
 | `401` | Bad API key | Check your integration config |
+| `403` | Origin not allowed | Add your domain to the project's `allowed_origins` |
 | `409` | Duplicate | "You're already on the waitlist" |
 | `429` | Rate limited | "Please try again in a minute" |
 
@@ -504,9 +515,9 @@ Confirmation emails are **optional**. When `RESEND_API_KEY` is unset, subscriber
 
 When enabled:
 
-1. On successful subscribe, `email.Service.SendConfirmation` runs in a goroutine.
-2. The service loads the project's `email_templates` row (if any).
-3. Subject and HTML body are rendered with Go `text/template`.
+1. On successful subscribe, `email.Service.SendConfirmation` runs in a goroutine (bounded by a 30-second timeout).
+2. The service loads the project's `email_templates` row (if any). If the lookup *fails* (as opposed to no template existing), the send is skipped — defaults must not override a project that disabled emails.
+3. The subject is rendered with Go `text/template`; the HTML body with `html/template`, so subscriber-controlled values like `{{.Email}}` are escaped while your template's own HTML passes through.
 4. Email is sent via [Resend](https://resend.com) using per-project or default `from` address.
 
 Failures are logged server-side and do not affect the HTTP response — the subscriber is already persisted.
@@ -515,7 +526,7 @@ Failures are logged server-side and do not affect the HTTP response — the subs
 
 ## Referral and Position Tracking
 
-Each subscriber receives a **0-indexed position** per project, assigned atomically at insert time using `MAX(position) + 1` with a unique index guard against races.
+Each subscriber receives a **0-indexed position** per project, assigned at insert time using `MAX(position) + 1`. A unique index guards against concurrent-insert races; the losing insert is retried automatically (up to 3 attempts) rather than surfacing an error.
 
 **Referral fields:**
 
@@ -541,9 +552,12 @@ Migrations run from `internal/database/db.go` on every startup.
 | `id` | UUID | Primary key, `gen_random_uuid()` |
 | `name` | VARCHAR(255) | Display name |
 | `slug` | VARCHAR(100) | Unique URL-safe identifier |
-| `api_key` | VARCHAR(128) | Unique, indexed |
+| `api_key_hash` | CHAR(64) | SHA-256 of the secret key; unique, indexed |
+| `public_key` | VARCHAR(128) | Publishable key (`wl_pub_…`); unique, indexed |
 | `allowed_origins` | TEXT[] | CORS allowlist |
 | `created_at` | TIMESTAMPTZ | Default `NOW()` |
+
+Legacy databases upgrade in place on startup: plaintext `api_key` values are hashed into `api_key_hash`, the plaintext column is dropped, and missing `public_key` values are generated.
 
 ### `subscribers`
 
@@ -581,11 +595,15 @@ Migrations run from `internal/database/db.go` on every startup.
 
 | Topic | Implementation |
 |-------|----------------|
+| **Key separation** | Publishable key (subscribe only, browser-safe) vs secret key (management, server-only) |
+| **Key storage** | Secret keys stored as SHA-256 hashes; plaintext shown once at creation |
 | **Tenant isolation** | All subscriber queries filter by `project_id` from authenticated API key |
-| **Admin separation** | Admin key required for project management; never exposed to browsers |
-| **Rate limiting** | Subscribe endpoint only; mitigates signup spam |
-| **Input limits** | 10 KB request body cap; 4 KB metadata cap; email validated via `net/mail` |
-| **CORS** | Per-project origin allowlist; empty list allows all origins |
+| **Admin separation** | Admin key compared in constant time; never exposed to browsers |
+| **Rate limiting** | Subscribe endpoint only; `X-Forwarded-For` trusted only with `TRUST_PROXY=true` |
+| **Input limits** | Body caps: 10 KB subscribe, 16 KB projects, 256 KB templates; 4 KB metadata; email validated and normalized via `net/mail` |
+| **CORS / origin check** | Per-project allowlist enforced server-side (`403` on mismatch); empty list allows all origins |
+| **CSV export** | Cells starting with formula characters are neutralized against spreadsheet injection |
+| **Email rendering** | Body rendered with `html/template` — subscriber data is escaped |
 | **Secrets** | `ADMIN_KEY`, `DATABASE_URL`, `RESEND_API_KEY` via environment only |
 | **Email privacy** | Subscriber emails stored in your PostgreSQL instance; export via authenticated API |
 | **HTTPS** | Required in production (enforced at reverse proxy / hosting layer) |
@@ -594,7 +612,7 @@ Migrations run from `internal/database/db.go` on every startup.
 
 - Rotate `ADMIN_KEY` if compromised; API keys are per-project and can be recreated by making a new project.
 - Use explicit `allowed_origins` in production instead of leaving the list empty.
-- Place the service behind a reverse proxy that sets trusted `X-Forwarded-For` headers for accurate rate limiting.
+- Behind a reverse proxy, set `TRUST_PROXY=true` so rate limiting keys on the real client IP; without a proxy, leave it `false` (the default) — otherwise the limit is trivially bypassable.
 
 ---
 
@@ -610,8 +628,8 @@ Migrations run from `internal/database/db.go` on every startup.
 
 The [Dockerfile](Dockerfile) uses a multi-stage build:
 
-1. `golang:1.25-alpine` — compile static binary (`CGO_ENABLED=0`)
-2. `alpine:3.21` — minimal runtime with CA certificates
+1. `golang:1.25-alpine` — compile static binary (`CGO_ENABLED=0`, dependencies verified against `go.sum`)
+2. `alpine:3.21` — minimal runtime with CA certificates, runs as non-root user
 
 ```powershell
 docker build -t email-waitlist .
@@ -626,14 +644,17 @@ The server handles `SIGINT` and `SIGTERM`, allowing up to 10 seconds for in-flig
 
 ## Verification
 
-No automated test suite is checked in. Validate changes locally:
+CI runs gofmt, vet, build, and tests on every PR ([.github/workflows/ci.yml](.github/workflows/ci.yml)). Locally:
 
 ```powershell
 # Compile
-go build -o server.exe ./cmd/server/
+go build ./...
 
 # Static analysis
 go vet ./...
+
+# Unit tests (validation, auth, CORS, rate limiting, template rendering)
+go test ./... -count=1
 
 # Health check (with server running)
 curl.exe http://localhost:8090/health
@@ -645,7 +666,7 @@ curl.exe http://localhost:8090/health
 ## Roadmap
 
 - [ ] OpenAPI 3 spec generated from handlers
-- [ ] `go test` coverage for models and handlers
+- [x] `go test` coverage for validation, middleware, rendering, and DB migrations (migration tests are opt-in via `TEST_DATABASE_URL` pointing at a throwaway database)
 - [ ] Webhook on new subscriber (Slack, Discord, custom URL)
 - [ ] Double opt-in flow with confirmation tokens
 - [ ] API key rotation without recreating projects
